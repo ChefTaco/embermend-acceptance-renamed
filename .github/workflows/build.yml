@@ -24,12 +24,15 @@ jobs:
           sudo chmod a+r /etc/apt/keyrings/docker.asc
           printf 'deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable\n' | sudo tee /etc/apt/sources.list.d/embermend-docker.list > /dev/null
           sudo apt-get update -qq
-          sudo apt-get install -y -qq docker-ce-rootless-extras docker-ce-cli docker-buildx-plugin
+          sudo apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-ce-rootless-extras docker-buildx-plugin
           sudo useradd --create-home --shell /bin/bash embermend-builder
           builder_uid=$(id -u embermend-builder)
           sudo loginctl enable-linger embermend-builder
           sudo systemctl start "user@$builder_uid.service"
-          sudo runuser -u embermend-builder -- env -i HOME=/home/embermend-builder PATH=/usr/bin:/bin XDG_RUNTIME_DIR="/run/user/$builder_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$builder_uid/bus" dockerd-rootless-setuptool.sh install --force
+          if ! sudo runuser -u embermend-builder -- env -i HOME=/home/embermend-builder PATH=/usr/bin:/bin XDG_RUNTIME_DIR="/run/user/$builder_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$builder_uid/bus" dockerd-rootless-setuptool.sh install --force; then
+            sudo journalctl --no-pager "_UID=$builder_uid" -n 100
+            exit 1
+          fi
           sudo install -d -m 0700 -o embermend-builder -g embermend-builder /opt/embermend-build/source /opt/embermend-build/output
           sudo cp -a "$GITHUB_WORKSPACE/." /opt/embermend-build/source/
           sudo chown -R embermend-builder:embermend-builder /opt/embermend-build
