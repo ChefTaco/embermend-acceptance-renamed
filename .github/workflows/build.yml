@@ -25,34 +25,34 @@ jobs:
           printf 'deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable\n' | sudo tee /etc/apt/sources.list.d/embermend-docker.list > /dev/null
           sudo apt-get update -qq
           sudo apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-ce-rootless-extras docker-buildx-plugin
-          sudo useradd --create-home --shell /bin/bash embermend-builder
-          builder_uid=$(id -u embermend-builder)
-          sudo install -d -m 0755 "/etc/systemd/system/user@$builder_uid.service.d"
-          printf '[Service]\nEnvironment=HOME=/home/embermend-builder\nEnvironment=XDG_CONFIG_HOME=/home/embermend-builder/.config\nEnvironment=XDG_DATA_HOME=/home/embermend-builder/.local/share\nEnvironment=XDG_RUNTIME_DIR=/run/user/%s\nEnvironment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus\n' "$builder_uid" "$builder_uid" | sudo tee "/etc/systemd/system/user@$builder_uid.service.d/worker-environment.conf" > /dev/null
-          sudo systemctl daemon-reload
-          sudo loginctl enable-linger embermend-builder
+          builder_uid=$(id -u)
+          builder_home=$(getent passwd "$builder_uid" | cut -d: -f6)
+          test "$builder_uid" -ne 0
+          sudo loginctl enable-linger "$(id -un)"
           sudo systemctl start "user@$builder_uid.service"
-          if ! sudo runuser -u embermend-builder -- env -i HOME=/home/embermend-builder PATH=/usr/bin:/bin XDG_RUNTIME_DIR="/run/user/$builder_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$builder_uid/bus" dockerd-rootless-setuptool.sh install --force; then
+          if ! env -i HOME="$builder_home" PATH=/usr/bin:/bin XDG_RUNTIME_DIR="/run/user/$builder_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$builder_uid/bus" dockerd-rootless-setuptool.sh install --force; then
             sudo journalctl --no-pager "_UID=$builder_uid" -n 100
             exit 1
           fi
-          sudo install -d -m 0700 -o embermend-builder -g embermend-builder /opt/embermend-build/source /opt/embermend-build/output
-          sudo cp -a "$GITHUB_WORKSPACE/." /opt/embermend-build/source/
-          sudo chown -R embermend-builder:embermend-builder /opt/embermend-build
+          mkdir -p "$RUNNER_TEMP/embermend-build/source" "$RUNNER_TEMP/embermend-build/output"
+          cp -a "$GITHUB_WORKSPACE/." "$RUNNER_TEMP/embermend-build/source/"
+          chmod 0755 "$RUNNER_TEMP/embermend-build/source"
       - name: Independently validate and build without write credentials
         shell: bash
         run: |
           set -euo pipefail
-          builder_uid=$(id -u embermend-builder)
+          builder_uid=$(id -u)
+          builder_home=$(getent passwd "$builder_uid" | cut -d: -f6)
+          builder_root="$RUNNER_TEMP/embermend-build"
           rootless() {
-            sudo runuser -u embermend-builder -- env -i HOME=/home/embermend-builder PATH=/usr/bin:/bin XDG_RUNTIME_DIR="/run/user/$builder_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$builder_uid/bus" DOCKER_HOST="unix:///run/user/$builder_uid/docker.sock" "$@"
+            env -i HOME="$builder_home" PATH=/usr/bin:/bin XDG_RUNTIME_DIR="/run/user/$builder_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$builder_uid/bus" DOCKER_HOST="unix:///run/user/$builder_uid/docker.sock" "$@"
           }
           rootless docker info --format '{{json .SecurityOptions}}' | tee rootless-security.json
           node -e "const fs=require('node:fs'); const options=JSON.parse(fs.readFileSync('rootless-security.json')); if (!options.some(value=>value.includes('rootless'))) process.exit(1)"
-          rootless docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 64 --memory 512m --cpus 1 --user 1000:1000 --workdir /source --mount type=bind,source=/opt/embermend-build/source,target=/source,readonly node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c node --test test/baseline.test.mjs test/security.test.mjs
+          rootless docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 64 --memory 512m --cpus 1 --user 1000:1000 --workdir /source --mount "type=bind,source=$builder_root/source,target=/source,readonly" node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c node --test test/baseline.test.mjs test/security.test.mjs
           rootless docker buildx create --name acceptance-builder --driver docker-container --driver-opt memory=2g,cpu-quota=200000 --use --bootstrap
-          rootless docker buildx build --builder acceptance-builder --network none --platform linux/amd64,linux/arm64 --build-arg "SOURCE_REVISION=$GITHUB_SHA" --attest type=provenance,mode=max --attest type=sbom,generator=docker.io/docker/buildkit-syft-scanner@sha256:873a7458c3c8ac8e32c7b796c10e1600b07b963d2aa000a72a2d97aaaa2d6315 --output type=oci,dest=/opt/embermend-build/output/image.oci.tar /opt/embermend-build/source
-          sudo install -m 0644 /opt/embermend-build/output/image.oci.tar image.oci.tar
+          rootless docker buildx build --builder acceptance-builder --network none --platform linux/amd64,linux/arm64 --build-arg "SOURCE_REVISION=$GITHUB_SHA" --attest type=provenance,mode=max --attest type=sbom,generator=docker.io/docker/buildkit-syft-scanner@sha256:873a7458c3c8ac8e32c7b796c10e1600b07b963d2aa000a72a2d97aaaa2d6315 --output "type=oci,dest=$builder_root/output/image.oci.tar" "$builder_root/source"
+          install -m 0644 "$builder_root/output/image.oci.tar" image.oci.tar
           sha256sum image.oci.tar > image.oci.tar.sha256
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
