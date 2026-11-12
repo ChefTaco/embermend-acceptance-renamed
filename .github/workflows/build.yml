@@ -1,0 +1,71 @@
+name: Isolated image build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Provision the disposable rootless worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq uidmap dbus-user-session slirp4netns docker-ce-rootless-extras
+          sudo useradd --create-home --shell /bin/bash embermend-builder
+          builder_uid=$(id -u embermend-builder)
+          sudo loginctl enable-linger embermend-builder
+          sudo systemctl start "user@$builder_uid.service"
+          sudo runuser -u embermend-builder -- env -i HOME=/home/embermend-builder PATH=/usr/bin:/bin XDG_RUNTIME_DIR="/run/user/$builder_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$builder_uid/bus" dockerd-rootless-setuptool.sh install --force
+          sudo install -d -m 0700 -o embermend-builder -g embermend-builder /opt/embermend-build/source /opt/embermend-build/output
+          sudo cp -a "$GITHUB_WORKSPACE/." /opt/embermend-build/source/
+          sudo chown -R embermend-builder:embermend-builder /opt/embermend-build
+      - name: Independently validate and build without write credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          builder_uid=$(id -u embermend-builder)
+          rootless() {
+            sudo runuser -u embermend-builder -- env -i HOME=/home/embermend-builder PATH=/usr/bin:/bin XDG_RUNTIME_DIR="/run/user/$builder_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$builder_uid/bus" DOCKER_HOST="unix:///run/user/$builder_uid/docker.sock" "$@"
+          }
+          rootless docker info --format '{{json .SecurityOptions}}' | tee rootless-security.json
+          node -e "const fs=require('node:fs'); const options=JSON.parse(fs.readFileSync('rootless-security.json')); if (!options.some(value=>value.includes('rootless'))) process.exit(1)"
+          rootless docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 64 --memory 512m --cpus 1 --user 1000:1000 --workdir /source --mount type=bind,source=/opt/embermend-build/source,target=/source,readonly node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c node --test test/baseline.test.mjs test/security.test.mjs
+          rootless docker buildx create --name acceptance-builder --driver docker-container --driver-opt memory=2g,cpu-quota=200000 --use --bootstrap
+          rootless docker buildx build --builder acceptance-builder --network none --platform linux/amd64,linux/arm64 --build-arg "SOURCE_REVISION=$GITHUB_SHA" --attest type=provenance,mode=max --attest type=sbom,generator=docker.io/docker/buildkit-syft-scanner@sha256:873a7458c3c8ac8e32c7b796c10e1600b07b963d2aa000a72a2d97aaaa2d6315 --output type=oci,dest=/opt/embermend-build/output/image.oci.tar /opt/embermend-build/source
+          sudo install -m 0644 /opt/embermend-build/output/image.oci.tar image.oci.tar
+          sha256sum image.oci.tar > image.oci.tar.sha256
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: isolated-image
+          path: |
+            image.oci.tar
+            image.oci.tar.sha256
+            rootless-security.json
+          retention-days: 14
+          if-no-files-found: error
+  attest:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: isolated-image
+      - name: Verify the exact built artifact
+        run: sha256sum --check image.oci.tar.sha256
+      - name: Attest without checking out or executing repository code
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: image.oci.tar
