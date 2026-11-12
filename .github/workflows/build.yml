@@ -27,6 +27,9 @@ jobs:
           sudo apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-ce-rootless-extras docker-buildx-plugin
           sudo useradd --create-home --shell /bin/bash embermend-builder
           builder_uid=$(id -u embermend-builder)
+          sudo install -d -m 0755 "/etc/systemd/system/user@$builder_uid.service.d"
+          printf '[Service]\nEnvironment=HOME=/home/embermend-builder\nEnvironment=XDG_CONFIG_HOME=/home/embermend-builder/.config\nEnvironment=XDG_DATA_HOME=/home/embermend-builder/.local/share\nEnvironment=XDG_RUNTIME_DIR=/run/user/%s\nEnvironment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus\n' "$builder_uid" "$builder_uid" | sudo tee "/etc/systemd/system/user@$builder_uid.service.d/worker-environment.conf" > /dev/null
+          sudo systemctl daemon-reload
           sudo loginctl enable-linger embermend-builder
           sudo systemctl start "user@$builder_uid.service"
           if ! sudo runuser -u embermend-builder -- env -i HOME=/home/embermend-builder PATH=/usr/bin:/bin XDG_RUNTIME_DIR="/run/user/$builder_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$builder_uid/bus" dockerd-rootless-setuptool.sh install --force; then
