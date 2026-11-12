@@ -18,7 +18,13 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq uidmap dbus-user-session slirp4netns docker-ce-rootless-extras
+          sudo apt-get install -y -qq ca-certificates curl uidmap dbus-user-session slirp4netns
+          sudo install -m 0755 -d /etc/apt/keyrings
+          curl --fail --silent --show-error https://download.docker.com/linux/ubuntu/gpg | sudo tee /etc/apt/keyrings/docker.asc > /dev/null
+          sudo chmod a+r /etc/apt/keyrings/docker.asc
+          printf 'deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable\n' | sudo tee /etc/apt/sources.list.d/embermend-docker.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq docker-ce-rootless-extras docker-ce-cli docker-buildx-plugin
           sudo useradd --create-home --shell /bin/bash embermend-builder
           builder_uid=$(id -u embermend-builder)
           sudo loginctl enable-linger embermend-builder
