@@ -1,0 +1,24 @@
+{
+  "name": "embermend-acceptance-fixture",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": "^24.22.1 || ^26.13.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/baseline.test.mjs",
+    "hooks:install": "git config core.hooksPath .githooks",
+    "check:private": "bash scripts/check-private-data.sh",
+    "scan:secrets": "bash scripts/gitleaks.sh --staged"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3",
+    "@types/node": "24.19.2"
+  },
+  "overrides": {
+    "typescript": "6.0.3"
+  }
+}

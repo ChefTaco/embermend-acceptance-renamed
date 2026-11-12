@@ -1,0 +1,5 @@
+*
+!apps
+!apps/catalog
+!apps/catalog/**
+!Dockerfile
