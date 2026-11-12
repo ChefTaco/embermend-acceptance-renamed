@@ -30,7 +30,7 @@ jobs:
           test "$builder_uid" -ne 0
           sudo loginctl enable-linger "$(id -un)"
           sudo systemctl start "user@$builder_uid.service"
-          if ! env -i HOME="$builder_home" PATH=/usr/bin:/bin XDG_RUNTIME_DIR="/run/user/$builder_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$builder_uid/bus" dockerd-rootless-setuptool.sh install --force; then
+          if ! env -i HOME="$builder_home" PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin XDG_RUNTIME_DIR="/run/user/$builder_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$builder_uid/bus" dockerd-rootless-setuptool.sh install --force; then
             sudo journalctl --no-pager "_UID=$builder_uid" -n 100
             exit 1
           fi
@@ -45,7 +45,7 @@ jobs:
           builder_home=$(getent passwd "$builder_uid" | cut -d: -f6)
           builder_root="$RUNNER_TEMP/embermend-build"
           rootless() {
-            env -i HOME="$builder_home" PATH=/usr/bin:/bin XDG_RUNTIME_DIR="/run/user/$builder_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$builder_uid/bus" DOCKER_HOST="unix:///run/user/$builder_uid/docker.sock" "$@"
+            env -i HOME="$builder_home" PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin XDG_RUNTIME_DIR="/run/user/$builder_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$builder_uid/bus" DOCKER_HOST="unix:///run/user/$builder_uid/docker.sock" "$@"
           }
           rootless docker info --format '{{json .SecurityOptions}}' | tee rootless-security.json
           node -e "const fs=require('node:fs'); const options=JSON.parse(fs.readFileSync('rootless-security.json')); if (!options.some(value=>value.includes('rootless'))) process.exit(1)"
